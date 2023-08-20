@@ -2,16 +2,17 @@ import {test, assert, assertAlmostEquals, assertEquals, assertInstanceOf, assert
 import {DB} from '../dist/index.js';
 import {Status} from '../dist/constants.js';
 import {SqliteError} from '../dist/error.js';
+import fs from 'node:fs/promises';
 
 const TEST_DB = "test.db";
 const LARGE_TEST_DB = "build/2GB_test.db";
 
 async function deleteDatabase(file) {
   try {
-    await Deno.remove(file);
+    await fs.unlink(file);
   } catch { /* no op */ }
   try {
-    await Deno.remove(`${file}-journal`);
+    await fs.unlink(`${file}-journal`);
   } catch { /* no op */ }
 }
 
