@@ -8,7 +8,7 @@ db.query("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, b
 
 benchmark({
   name: "insert 10 000 (named)",
-  iterations: 100,
+  iterations: 10,
   fn: () => {
     const query = db.prepareQuery(
       "INSERT INTO users (name, balance) VALUES (:name, :balance)",
@@ -23,7 +23,7 @@ benchmark({
 
 benchmark({
   name: "insert 10 000 (positional)",
-  iterations: 100,
+  iterations: 10,
   fn: () => {
     const query = db.prepareQuery(
       "INSERT INTO users (name, balance) VALUES (?, ?)",
@@ -38,7 +38,7 @@ benchmark({
 
 benchmark({
   name: "select 10 000 (select all)",
-  iterations: 100,
+  iterations: 10,
   fn: () => {
     db.query(
       "SELECT name, balance FROM users LIMIT 10000",
@@ -48,7 +48,7 @@ benchmark({
 
 benchmark({
   name: "select 10 000 (select first)",
-  iterations: 100,
+  iterations: 10,
   fn: () => {
     const query = db.prepareQuery(
       "SELECT name, balance FROM users WHERE id = ?",

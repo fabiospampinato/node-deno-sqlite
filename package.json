@@ -24,6 +24,9 @@
     "port",
     "wasm"
   ],
+  "dependencies": {
+    "zeptoid": "^1.0.1"
+  },
   "devDependencies": {
     "benchloop": "^2.1.1",
     "fava": "^0.3.0",
