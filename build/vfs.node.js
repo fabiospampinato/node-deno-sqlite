@@ -81,13 +81,11 @@ export default function env(inst) {
     },
     // Acquire a SHARED or EXCLUSIVE file lock
     js_lock: (rid, exclusive) => { //TODO
-      // globalThis.process.stdout.write(`lock: ${rid} - ${exclusive ? 1 : 0}\n`);
       // this is unstable and has issues on Windows ...
       // if (Deno.flockSync && !isWindows) Deno.flockSync(rid, exclusive !== 0);
     },
     // Release a file lock
     js_unlock: (rid) => { //TODO
-      // globalThis.process.stdout.write(`unlock: ${rid}\n`);
       // this is unstable and has issues on Windows ...
       // if (Deno.funlockSync && !isWindows) Deno.funlockSync(rid);
     },
