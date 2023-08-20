@@ -1,7 +1,7 @@
-import { StatementPtr, Wasm } from "../build/sqlite.js";
-import { getStr, setArr, setStr } from "./wasm.ts";
-import { Status, Types, Values } from "./constants.ts";
-import { SqliteError } from "./error.ts";
+import type {StatementPtr, Wasm} from '../build/sqlite.js';
+import {Status, Types, Values} from './constants';
+import {SqliteError} from './error';
+import {getStr, setArr, setStr} from './wasm';
 
 /**
  * The default type for returned rows.
@@ -201,6 +201,12 @@ export class PreparedQuery<
         case "boolean":
           value = value ? 1 : 0;
           // fall through
+          if (Number.isSafeInteger(value)) {
+            status = this.#wasm.bind_int(this.#stmt, i + 1, value);
+          } else {
+            status = this.#wasm.bind_double(this.#stmt, i + 1, value);
+          }
+          break;
         case "number":
           if (Number.isSafeInteger(value)) {
             status = this.#wasm.bind_int(this.#stmt, i + 1, value);

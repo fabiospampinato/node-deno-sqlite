@@ -1,6 +1,6 @@
-import { Wasm } from "../build/sqlite.js";
-import { getStr } from "./wasm.ts";
-import { Status } from "./constants.ts";
+import type {Wasm} from '../build/sqlite.js';
+import {Status} from './constants';
+import {getStr} from './wasm';
 
 /**
  * Errors which can occur while interacting with

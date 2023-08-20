@@ -1,4 +1,4 @@
-import { getStr } from "../src/wasm.ts";
+import {getStr} from '../dist/wasm.js';
 
 const isWindows = Deno.build.os === "windows";
 

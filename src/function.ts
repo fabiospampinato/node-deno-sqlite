@@ -1,7 +1,7 @@
-import { Wasm } from "../build/sqlite.js";
-import { Status, Types } from "./constants.ts";
-import { getStr, setArr, setStr } from "./wasm.ts";
-import { SqliteError } from "./error.ts";
+import type {Wasm} from '../build/sqlite.js';
+import {Status, Types} from './constants';
+import {SqliteError} from './error';
+import {getStr, setArr, setStr} from './wasm';
 
 /**
  * Possible arguments a user-defined SQL function might
@@ -97,6 +97,12 @@ export function wrapSqlFunction(
         case "boolean":
           result = result ? 1 : 0;
           // fall through
+          if (Number.isSafeInteger(result)) {
+            wasm.result_int(result);
+          } else {
+            wasm.result_double(result);
+          }
+          break;
         case "number":
           if (Number.isSafeInteger(result)) {
             wasm.result_int(result);
@@ -137,7 +143,7 @@ export function wrapSqlFunction(
           }
           break;
       }
-    } catch (error) {
+    } catch (error: any) {
       setStr(
         wasm,
         `Error in user defined function '${name}': ${error?.message}`,

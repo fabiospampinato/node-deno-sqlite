@@ -1,0 +1,33 @@
+{
+  "name": "node-deno-sqlite",
+  "repository": "github:fabiospampinato/node-deno-sqlite",
+  "description": "Node's port of Deno's SQLite module.",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "benchmark": "tsex benchmark",
+    "benchmark:watch": "tsex benchmark --watch",
+    "clean": "tsex clean",
+    "compile": "tsex compile",
+    "compile:watch": "tsex compile --watch",
+    "test": "tsex test",
+    "test:watch": "tsex test --watch",
+    "prepublishOnly": "tsex prepare"
+  },
+  "keywords": [
+    "node",
+    "deno",
+    "sql",
+    "port",
+    "wasm"
+  ],
+  "devDependencies": {
+    "benchloop": "^2.1.1",
+    "fava": "^0.3.0",
+    "tsex": "^3.0.1",
+    "typescript": "^5.1.6"
+  }
+}

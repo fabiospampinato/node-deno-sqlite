@@ -1,20 +1,12 @@
-import { instantiate, StatementPtr, Wasm } from "../build/sqlite.js";
-import { setStr } from "./wasm.ts";
-import {
-  DeserializeFlags,
-  FunctionFlags,
-  OpenFlags,
-  Status,
-  Values,
-} from "./constants.ts";
-import { SqliteError } from "./error.ts";
-import { PreparedQuery, QueryParameterSet, Row, RowObject } from "./query.ts";
-import {
-  SqlFunction,
-  SqlFunctionArgument,
-  SqlFunctionResult,
-  wrapSqlFunction,
-} from "./function.ts";
+import type {StatementPtr, Wasm} from '../build/sqlite.js';
+import {instantiate} from '../build/sqlite.js';
+import {DeserializeFlags, FunctionFlags, OpenFlags, Status, Values} from './constants';
+import {SqliteError} from './error';
+import type {SqlFunction, SqlFunctionArgument, SqlFunctionResult} from './function';
+import {wrapSqlFunction} from './function';
+import type {QueryParameterSet, Row, RowObject} from './query';
+import {PreparedQuery} from './query';
+import {setStr} from './wasm';
 
 /**
  * Options for opening a database.

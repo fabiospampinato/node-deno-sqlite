@@ -1,5 +1,5 @@
-import { Wasm } from "../build/sqlite.js";
-import { SqliteError } from "./error.ts";
+import type {Wasm} from '../build/sqlite.js';
+import {SqliteError} from './error';
 
 // Move string to C
 export function setStr<T>(

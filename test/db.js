@@ -1,0 +1,520 @@
+import {test, assert, assertAlmostEquals, assertEquals, assertInstanceOf, assertThrows} from './_helpers.js';
+import {DB} from '../dist/index.js';
+import {Status} from '../dist/constants.js';
+import {SqliteError} from '../dist/error.js';
+
+const TEST_DB = "test.db";
+const LARGE_TEST_DB = "build/2GB_test.db";
+
+async function deleteDatabase(file) {
+  try {
+    await Deno.remove(file);
+  } catch { /* no op */ }
+  try {
+    await Deno.remove(`${file}-journal`);
+  } catch { /* no op */ }
+}
+
+test("execute multiple statements", function () {
+  const db = new DB();
+
+  db.execute(`
+    CREATE TABLE test (id INTEGER PRIMARY KEY AUTOINCREMENT);
+
+    INSERT INTO test (id) VALUES (1);
+    INSERT INTO test (id) VALUES (2);
+    INSERT INTO test (id) VALUES (3);
+  `);
+  assertEquals(db.query("SELECT id FROM test"), [[1], [2], [3]]);
+
+  // table `test` already exists ...
+  assertThrows(function () {
+    db.execute(`
+      CREATE TABLE test2 (id INTEGER);
+      CREATE TABLE test (id INTEGER);
+    `);
+  });
+
+  // ... but table `test2` was created before the error
+  assertEquals(db.query("SELECT id FROM test2"), []);
+
+  // syntax error after first valid statement
+  assertThrows(() => db.execute("SELECT id FROM test; NOT SQL ANYMORE"));
+});
+
+test("foreign key constraints enabled", function () {
+  const db = new DB();
+  db.execute(`
+    CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT);
+    CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user INTEGER, FOREIGN KEY(user) REFERENCES users(id));
+  `);
+
+  db.query("INSERT INTO users (id) VALUES (1)");
+  const [{ id }] = db.queryEntries("SELECT id FROM users");
+
+  // user must exist
+  assertThrows(() =>
+    db.query("INSERT INTO orders (user) VALUES (?)", [id + 1])
+  );
+  db.query("INSERT INTO orders (user) VALUES (?)", [id]);
+
+  // can't delete if that violates the constraint ...
+  assertThrows(() => {
+    db.query("DELETE FROM users WHERE id = ?", [id]);
+  });
+
+  // ... after deleting the order, deleting is OK
+  db.query("DELETE FROM orders WHERE user = ?", [id]);
+  db.query("DELETE FROM users WHERE id = ?", [id]);
+});
+
+test("json functions exist", function () {
+  const db = new DB();
+
+  // The JSON1 functions should exist and we should be able to call them without unexpected errors
+  db.query(`SELECT json('{"this is": ["json"]}')`);
+
+  // We should expect an error if we pass invalid JSON where valid JSON is expected
+  assertThrows(() => {
+    db.query(`SELECT json('this is not json')`);
+  });
+
+  // We should be able to use bound values as arguments to the JSON1 functions,
+  // and they should produce the expected results for these simple expressions.
+  const [[objectType]] = db.query(`SELECT json_type('{}')`);
+  assertEquals(objectType, "object");
+
+  const [[integerType]] = db.query(`SELECT json_type(?)`, ["2"]);
+  assertEquals(integerType, "integer");
+
+  const [[realType]] = db.query(`SELECT json_type(?)`, ["2.5"]);
+  assertEquals(realType, "real");
+
+  const [[stringType]] = db.query(`SELECT json_type(?)`, [`"hello"`]);
+  assertEquals(stringType, "text");
+
+  const [[integerTypeAtPath]] = db.query(
+    `SELECT json_type(?, ?)`,
+    [`["hello", 2, {"world": 4}]`, `$[2].world`],
+  );
+  assertEquals(integerTypeAtPath, "integer");
+});
+
+test("date time is correct", function () {
+  const db = new DB();
+  // the date/ time is passed from JS and should be current (note that it is GMT)
+  const [[now]] = [...db.query("SELECT STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')")];
+  const jsTime = new Date().getTime();
+  const dbTime = new Date(`${now}Z`).getTime();
+  // to account for runtime latency, a small difference is ok
+  const tolerance = 10;
+  assertAlmostEquals(jsTime, dbTime, tolerance);
+  db.close();
+});
+
+test("SQL localtime reflects system locale", function () {
+  const db = new DB();
+  const [[timeDb]] = db.query("SELECT datetime('now', 'localtime')");
+  const now = new Date();
+
+  const jsMonth = `${now.getMonth() + 1}`.padStart(2, "0");
+  const jsDate = `${now.getDate()}`.padStart(2, "0");
+  const jsHour = `${now.getHours()}`.padStart(2, "0");
+  const jsMinute = `${now.getMinutes()}`.padStart(2, "0");
+  const jsSecond = `${now.getSeconds()}`.padStart(2, "0");
+  const timeJs =
+    `${now.getFullYear()}-${jsMonth}-${jsDate} ${jsHour}:${jsMinute}:${jsSecond}`;
+
+  assertEquals(timeDb, timeJs);
+});
+
+test("database has correct changes and totalChanges", function () {
+  const db = new DB();
+
+  db.execute(
+    "CREATE TABLE test (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)",
+  );
+
+  for (const name of ["a", "b", "c"]) {
+    db.query("INSERT INTO test (name) VALUES (?)", [name]);
+    assertEquals(1, db.changes);
+  }
+
+  assertEquals(3, db.totalChanges);
+
+  db.query("UPDATE test SET name = ?", ["new name"]);
+  assertEquals(3, db.changes);
+  assertEquals(6, db.totalChanges);
+});
+
+test("autoCommit property reflects database state", function () {
+  const db = new DB();
+  assertEquals(db.autoCommit, true);
+
+  db.query("BEGIN");
+  assertEquals(db.autoCommit, false);
+
+  db.query("ROLLBACK");
+  assertEquals(db.autoCommit, true);
+});
+
+test("last inserted id", function () {
+  const db = new DB();
+
+  // By default, lastInsertRowId must be 0
+  assertEquals(db.lastInsertRowId, 0);
+
+  // Create table and insert value
+  db.query("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+  const insertRowIds = [];
+
+  // Insert data to table and collect their ids
+  for (let i = 0; i < 10; i++) {
+    db.query("INSERT INTO users (name) VALUES ('John Doe')");
+    insertRowIds.push(db.lastInsertRowId);
+  }
+
+  // Now, the last inserted row id must be 10
+  assertEquals(db.lastInsertRowId, 10);
+
+  // All collected row ids must be the same as in the database
+  assertEquals(
+    insertRowIds,
+    [...db.query("SELECT id FROM users")].map(([i]) => i),
+  );
+
+  db.close();
+
+  // When the database is closed, the value
+  // will be reset to 0 again
+  assertEquals(db.lastInsertRowId, 0);
+});
+
+test("close database", function () {
+  const db = new DB();
+  db.close();
+  assertThrows(() => db.query("CREATE TABLE test (name TEXT PRIMARY KEY)"));
+  db.close(); // check close is idempotent and won't throw
+});
+
+test("open queries block close", function () {
+  const db = new DB();
+  db.query("CREATE TABLE test (name TEXT PRIMARY KEY)");
+
+  const query = db.prepareQuery("SELECT name FROM test");
+  assertThrows(() => db.close());
+  query.finalize();
+
+  db.close();
+});
+
+test("open queries cleaned up by forced close", function () {
+  const db = new DB();
+  db.query("CREATE TABLE test (name TEXT PRIMARY KEY)");
+  db.query("INSERT INTO test (name) VALUES (?)", ["Deno"]);
+
+  db.prepareQuery("SELECT name FROM test WHERE name like '%test%'");
+
+  assertThrows(() => db.close());
+  db.close(true);
+});
+
+test("invalid bind does not leak statements", function () {
+  const db = new DB();
+  db.query("CREATE TABLE test (id INTEGER)");
+
+  for (let n = 0; n < 100; n++) {
+    assertThrows(() => {
+      // deno-lint-ignore no-explicit-any
+      const badBinding = [{}];
+      db.query("INSERT INTO test (id) VALUES (?)", badBinding);
+    });
+    assertThrows(() => {
+      const badBinding = { missingKey: null };
+      db.query("INSERT INTO test (id) VALUES (?)", badBinding);
+    });
+  }
+
+  db.query("INSERT INTO test (id) VALUES (1)");
+
+  db.close();
+});
+
+test("serialize / deserialize round-trips correctly", function () {
+  const db = new DB();
+  db.execute(`
+    CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT);
+    INSERT INTO test (id, value) VALUES (1, 'Hello'), (2, 'World');
+  `);
+
+  const original = db.serialize();
+
+  db.query(
+    "INSERT INTO test (id, value) VALUES (3, 'Added after serialize')",
+  );
+  assertEquals(
+    [["Hello"], ["World"], ["Added after serialize"]],
+    db.query("SELECT value FROM test"),
+  );
+
+  const modified = db.serialize();
+
+  db.deserialize(original);
+  assertEquals([["Hello"], ["World"]], db.query("SELECT value FROM test"));
+
+  db.execute("ATTACH DATABASE ':memory:' AS modified");
+  db.deserialize(modified, { schema: "modified" });
+  assertEquals([["Hello"], ["World"]], db.query("SELECT value FROM main.test"));
+  assertEquals(
+    [["Hello"], ["World"], ["Added after serialize"]],
+    db.query("SELECT value FROM modified.test"),
+  );
+
+  const copyOfModified = db.serialize("modified");
+  assertEquals(modified, copyOfModified);
+});
+
+test("can't modify a database deserialized as read-only", function () {
+  const db = new DB(":memory:", { mode: "write" });
+  db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)");
+  const data = db.serialize();
+
+  // before calling deserialize inserts are okay
+  db.execute("INSERT INTO test (id, value) VALUES (1, 'This works!')");
+
+  db.deserialize(data, { mode: "read" });
+
+  // after calling deserialize inserts throw
+  assertThrows(() =>
+    db.execute("INSERT INTO test (id, value) VALUES (2, 'This fails!')")
+  );
+});
+
+test("can't serialize an unknown database", function () {
+  const db = new DB();
+  assertThrows(() => db.serialize("unknown-schema"), (err) => {
+    assertInstanceOf(err, SqliteError);
+    assertEquals(err.code, Status.Unknown);
+    assertEquals(err.message, "Failed to serialize database 'unknown-schema'");
+  });
+});
+
+test("can't deserialize into temp database", function () {
+  const db = new DB();
+  db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)");
+  const data = db.serialize();
+  assertThrows(() => db.deserialize(data, { schema: "temp" }), (err) => {
+    assertInstanceOf(err, SqliteError);
+    assertEquals(err.code, Status.SqliteError);
+    assertEquals(err.message, "Failed to deserialize into database 'temp'");
+  });
+});
+
+test("transactions can be nested", function () {
+  const db = new DB();
+  db.query("CREATE TABLE test (id INTEGER PRIMARY KEY)");
+
+  db.transaction(() => {
+    db.query("INSERT INTO test (id) VALUES (1)");
+    assertThrows(
+      () => {
+        db.transaction(() => {
+          assert(!db.autoCommit);
+          db.query("INSERT INTO test (id) VALUES (2)");
+          throw new Error("boom!");
+        });
+      },
+      Error,
+      "boom!",
+    );
+    assert(!db.autoCommit);
+  });
+
+  assert(db.autoCommit);
+  assertEquals([{ id: 1 }], db.queryEntries("SELECT * FROM test"));
+});
+
+test("transactions commit when closure exists", function () {
+  const db = new DB();
+  db.query("CREATE TABLE test (id INTEGER PRIMARY KEY)");
+
+  db.transaction(() => {
+    assert(!db.autoCommit);
+    db.query("INSERT INTO test (id) VALUES (1)");
+  });
+
+  assert(db.autoCommit);
+  assertEquals([{ id: 1 }], db.queryEntries("SELECT * FROM test"));
+});
+
+test("transaction rolls back on throw", function () {
+  const db = new DB();
+  db.query("CREATE TABLE test (id INTEGER PRIMARY KEY)");
+
+  assertThrows(
+    () => {
+      db.transaction(() => {
+        assert(!db.autoCommit);
+        db.query("INSERT INTO test (id) VALUES (1)");
+        throw new Error("boom!");
+      });
+    },
+    Error,
+    "boom!",
+  );
+
+  assert(db.autoCommit);
+  assertEquals([], db.query("SELECT * FROM test"));
+});
+
+test(
+  "persist database to file",
+  async function () {
+    const data = [
+      "Hello World!",
+      "Hello Deno!",
+      "JavaScript <3",
+      "This costs 0€ / $0 / £0",
+      "Wéll, hällö thėrè¿",
+    ];
+
+    // ensure the test database file does not exist
+    await deleteDatabase(TEST_DB);
+
+    const db = new DB(TEST_DB);
+    db.execute(
+      "CREATE TABLE test (id INTEGER PRIMARY KEY AUTOINCREMENT, val TEXT)",
+    );
+    for (const val of data) {
+      db.query("INSERT INTO test (val) VALUES (?)", [val]);
+    }
+
+    // open the same database with a separate connection
+    const readOnlyDb = await new DB(TEST_DB, { mode: "read" });
+    for (
+      const [id, val] of readOnlyDb.query(
+        "SELECT * FROM test",
+      )
+    ) {
+      assertEquals(data[id - 1], val);
+    }
+
+    db.close();
+    readOnlyDb.close();
+    await deleteDatabase(TEST_DB);
+  },
+);
+
+test(
+  "temporary file database read / write",
+  function () {
+    const data = [
+      "Hello World!",
+      "Hello Deno!",
+      "JavaScript <3",
+      "This costs 0€ / $0 / £0",
+      "Wéll, hällö thėrè¿",
+    ];
+
+    const tempDb = new DB("");
+    tempDb.execute(
+      "CREATE TABLE test (id INTEGER PRIMARY KEY AUTOINCREMENT, val TEXT)",
+    );
+    for (const val of data) {
+      tempDb.query("INSERT INTO test (val) VALUES (?)", [val]);
+    }
+
+    for (
+      const [id, val] of tempDb.query("SELECT * FROM test")
+    ) {
+      assertEquals(data[id - 1], val);
+    }
+
+    tempDb.close();
+  },
+);
+
+test(
+  "database open options",
+  async function () {
+    await deleteDatabase(TEST_DB);
+
+    // when no file exists, these should error
+    assertThrows(() => new DB(TEST_DB, { mode: "write" }));
+    assertThrows(() => new DB(TEST_DB, { mode: "read" }));
+
+    // create the database
+    const dbCreate = new DB(TEST_DB, { mode: "create" });
+    dbCreate.execute(
+      "CREATE TABLE test (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)",
+    );
+    dbCreate.close();
+
+    // the default mode is create
+    await deleteDatabase(TEST_DB);
+    const dbCreateDefault = new DB(TEST_DB, { mode: "create" });
+    dbCreateDefault.execute(
+      "CREATE TABLE test (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)",
+    );
+    dbCreateDefault.close();
+
+    // in write mode, we can run INSERT queries ...
+    const dbWrite = new DB(TEST_DB, { mode: "write" });
+    dbWrite.query("INSERT INTO test (name) VALUES (?)", ["open-options-test"]);
+    dbWrite.close();
+
+    // ... which we can read in read-only mode ...
+    const dbRead = new DB(TEST_DB, { mode: "read" });
+    const rows = [...dbRead.query("SELECT id, name FROM test")];
+    assertEquals(rows, [[1, "open-options-test"]]);
+
+    // ... but we can't write with a read-only connection
+    assertThrows(() =>
+      dbRead.query("INTERT INTO test (name) VALUES (?)", ["this-fails"])
+    );
+    dbRead.close();
+    await deleteDatabase(TEST_DB);
+  },
+);
+
+// test(
+//   "create / write mode require write permissions",
+//   function () {
+//     // opening with these modes requires write permissions ...
+//     assertThrows(() => new DB(TEST_DB, { mode: "create" }));
+//     assertThrows(() => new DB(TEST_DB, { mode: "write" }));
+
+//     // ... and the default mode is create
+//     assertThrows(() => new DB(TEST_DB));
+
+//     // however, opening in read-only mode should work (the file was created
+//     // in the previous test)
+//     (new DB(TEST_DB, { mode: "read" })).close();
+
+//     // with memory flag set, the database will be in memory and
+//     // not require any permissions
+//     (new DB(TEST_DB, { mode: "create", memory: true })).close();
+
+//     // the mode can also be specified via a URI flag
+//     (new DB(`file:${TEST_DB}?mode=memory`, { uri: true })).close();
+//   },
+// );
+
+// test(
+//   "database larger than 2GB read / write",
+//   function () {
+//     // generated with `cd build && make testdb`
+//     const db = new DB(LARGE_TEST_DB, { mode: "write" });
+
+//     db.query("INSERT INTO test (value) VALUES (?)", ["This is a test..."]);
+
+//     const rows = [
+//       ...db.query("SELECT value FROM test ORDER BY id DESC LIMIT 10"),
+//     ];
+//     assertEquals(rows.length, 10);
+//     assertEquals(rows[0][0], "This is a test...");
+
+//     db.close();
+//   },
+// );
