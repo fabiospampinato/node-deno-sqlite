@@ -25,6 +25,7 @@
     "wasm"
   ],
   "dependencies": {
+    "dotlocker": "^1.0.0",
     "zeptoid": "^1.0.1"
   },
   "devDependencies": {

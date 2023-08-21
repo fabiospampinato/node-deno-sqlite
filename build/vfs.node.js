@@ -1,16 +1,15 @@
 import {getStr} from '../dist/wasm.js';
-// import * as fse from '../node_modules/fs-ext/fs-ext.js';
+import dotlocker from 'dotlocker';
 import fs from 'node:fs';
 import os from 'node:os';
 import _path from 'node:path';
-import process from 'node:process';
 import zeptoid from 'zeptoid';
-
-//TODO: Use another kind of lock, and check manually if the file is locked
 
 // Closure to return an environment that links
 // the current wasm context
 export default function env(inst) {
+  let paths = {};
+  let locks = {};
   // Exported environment
   const env = {
     // Print a string pointer to console
@@ -38,11 +37,14 @@ export default function env(inst) {
       if ( create && !fs.existsSync(path) ) {
         fs.writeFileSync(path, '');
       }
-      return fs.openSync(path, openFlags);
+      const fd = fs.openSync(path, openFlags);
+      paths[fd] = path;
+      return fd;
     },
     // Close a file
     js_close: (rid) => {
       fs.closeSync(rid);
+      delete paths[rid];
     },
     // Delete file at path
     js_delete: (path_ptr) => {
@@ -80,14 +82,19 @@ export default function env(inst) {
       return fs.fstatSync(rid).size;
     },
     // Acquire a SHARED or EXCLUSIVE file lock
-    js_lock: (rid, exclusive) => { //TODO
-      // this is unstable and has issues on Windows ...
-      // if (Deno.flockSync && !isWindows) Deno.flockSync(rid, exclusive !== 0);
+    js_lock: (rid, exclusive) => { //TODO: Support non-exclusive locks too
+      if ( locks[rid] ) return;
+      const path = paths[rid];
+      if ( !path ) throw new Error ( `Failed to acquire lock for fd: "${rid}"` );
+      const dispose = dotlocker.lockSync(path, { retries: Infinity, retryInterval: 2, staleInterval: 10_000 } );
+      if ( !dispose ) throw new Error ( `Failed to acquire lock for path: "${path}"` );
+      locks[rid] = dispose;
     },
     // Release a file lock
-    js_unlock: (rid) => { //TODO
-      // this is unstable and has issues on Windows ...
-      // if (Deno.funlockSync && !isWindows) Deno.funlockSync(rid);
+    js_unlock: (rid) => { //TODO: Support non-exclusive locks too
+      if ( !locks[rid] ) return;
+      locks[rid]();
+      delete locks[rid];
     },
     // Return current time in ms since UNIX epoch
     js_time: () => {
