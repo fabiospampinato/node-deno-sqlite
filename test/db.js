@@ -210,6 +210,13 @@ test("open queries block close", function () {
   db.close();
 });
 
+test("check database is closed", function () {
+  const db = new DB();
+  assertEquals(db.isClosed, false);
+  db.close();
+  assertEquals(db.isClosed, true);
+});
+
 test("open queries cleaned up by forced close", function () {
   const db = new DB();
   db.query("CREATE TABLE test (name TEXT PRIMARY KEY)");
